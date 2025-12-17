@@ -1,5 +1,12 @@
-**Wikidata**
+Files to use: `./data/wiki_db_cleaned.csv`, `./data/wiki_db_cleaned.ttl`
 
+## Processing Steps
+**1. Query from Wikidata**
+- Query and download from Wikidata.
+- Link: https://query.wikidata.org
+- Data used: Years 2020-2025, 10 genres. Located in the folder `./data/wiki_5y/`
+
+```sparql
 SELECT ?movie
        (SAMPLE(?label) AS ?title)
        (SAMPLE(?year) AS ?year)
@@ -44,11 +51,12 @@ WHERE {
   FILTER(LANG(?label) = "en")
 }
 GROUP BY ?movie
+```
 
 | Genre                | Q-id          |5y (2020-2025)|10y (2015-2025)|
 | -------------------- | ------------- | ------------ | ------------- |
 | Science fiction film | **Q24925**    | V            | V             |
-| Advanture film       | **Q319221**   | V            | V             |
+| Adventure film       | **Q319221**   | V            | V             |
 | Drama film           | **Q130232**   | V            | V             |
 | Comedy film          | **Q157443**   | V            | X             |
 | Horror film          | **Q200092**   | V            | V             |
@@ -57,3 +65,19 @@ GROUP BY ?movie
 | Romance film         | **Q1054574**  | V            | V             |
 | Crime film           | **Q959790**   | V            | V             |
 | Animated film        | **Q202866**   | V            | V             |
+
+**2. Merge the 10 CSV files**
+- Using the script: `merge_csv_files.py`
+- Output file: `./data/merged.csv`
+
+**3. Use QID to find corresponding data from DBpedia**
+- Using the script: `wikidata_to_dbpedia_movies.py`
+- Output file: `./data/wiki_db.csv`
+
+**4. Perform data preprocessing**
+- Using the script: `data_preprocessing.py`
+- Output file: `./data/wiki_db_cleaned.csv`
+
+**5. Convert to a Turtle file**
+- Using the script: `csv_to_rdf.py`
+- Output file: `./data/wiki_db_cleaned.ttl`
