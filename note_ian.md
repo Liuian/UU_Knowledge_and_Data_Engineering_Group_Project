@@ -67,7 +67,7 @@ GROUP BY ?movie
 | Crime film           | **Q959790**   | V            | V             |
 | Animated film        | **Q202866**   | V            | V             |
 
-- Testing sparql in dbpedia
+- Testing sparql in dbpedia https://dbpedia.org/sparql
 ```sparql
 PREFIX dbo: <http://dbpedia.org/ontology/>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
