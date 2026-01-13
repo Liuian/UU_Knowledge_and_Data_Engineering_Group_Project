@@ -3,5 +3,4 @@ uvicorn
 rdflib
 pydantic
 SPARQLWrapper
-sentence-transformers
-chromadb
+requests

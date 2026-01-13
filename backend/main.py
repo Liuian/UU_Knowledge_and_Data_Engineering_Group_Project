@@ -1,8 +1,10 @@
+print("BACKEND STARTING...", flush=True)
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from backend.query_engine import QueryEngine
-import os
 from typing import Optional
+import requests
+import os
 
 app = FastAPI(title="Movie Explorer API")
 
@@ -16,73 +18,75 @@ app.add_middleware(
 )
 
 # Initialize Query Engine
-BLAZEGRAPH_URL = os.getenv("BLAZEGRAPH_URL", "http://blazegraph:9999/blazegraph/sparql")
+RDF_PATH = os.path.join(os.path.dirname(__file__), "../data/wiki_db_cleaned.ttl")
+BLAZEGRAPH_URL = os.getenv("BLAZEGRAPH_URL", "http://blazegraph:8080/bigdata/namespace/kb/sparql")
 engine = QueryEngine(BLAZEGRAPH_URL)
 
-try:
-    from backend.semantic_search import SemanticSearch
-    semantic_search = SemanticSearch()
-except Exception as e:
-    print(f"WARNING: Semantic Search failed to initialize: {e}")
-    semantic_search = None
+import time
+import logging
 
-@app.on_event("startup")
-def startup_event():
-    from backend.loader import init_db
-    
-    # Paths to data files
-    base_dir = os.path.dirname(__file__)
-    data_files = [
-        os.path.join(base_dir, "../data/wiki_db_cleaned.ttl"),
-        os.path.join(base_dir, "../ontology/ontology.ttl")
-    ]
-    
-    print("DEBUG: Initializing Database...", flush=True)
-    try:
-        init_db(data_files)
-    except Exception as e:
-        print(f"WARNING: Database initialization failed: {e}", flush=True)
+logging.basicConfig(level=logging.INFO)
 
-    # Initialize Embeddings
-    if semantic_search:
-        print("DEBUG: Checking Embeddings Index...", flush=True)
+# Startup logic to wait for Blazegraph and load data
+def wait_for_blazegraph():
+    retries = 30
+    while retries > 0:
         try:
-            if semantic_search.count() == 0:
-                print("DEBUG: Index empty. Fetching movies from Blazegraph...", flush=True)
-                movies = engine.get_all_movies()
-                if movies:
-                     semantic_search.index_movies(movies)
-                else:
-                     print("WARNING: No movies found in Blazegraph to index.", flush=True)
+            if engine.is_connected():
+                logging.info("Blazegraph is ready and reachable.")
+                return True
             else:
-                print(f"DEBUG: Embeddings index has {semantic_search.count()} items.", flush=True)
-        except Exception as e:
-            print(f"WARNING: Embedding indexing failed: {e}", flush=True)
+                # Connected but ASK failed or returned false (empty might be false implementation dependent)
+                # actually is_connected catches exception. If it returns False, it might be just "connected but query failed" or "empty".
+                # Let's assume exception = down.
+                pass
+        except Exception:
+            pass
+        
+        logging.info(f"Waiting for Blazegraph... ({retries} retries left)")
+        time.sleep(2)
+        retries -= 1
+    return False
+
+# We need to distinguish between "Down" and "Empty".
+# The query_engine.is_connected returns False on Exception. 
+# We should probably check if we can query it.
+# Let's just try to loop until we can at least reach it.
+
+running_in_docker = os.getenv("BACKEND_URL") or os.path.exists("/.dockerenv")
+
+if running_in_docker:
+    logging.info("Checking Blazegraph status...")
+    # 1. Wait for service to be up
+    connected = False
+    for i in range(30):
+        try:
+            requests.get("http://blazegraph:8080/bigdata")
+            connected = True
+            break
+        except:
+            time.sleep(2)
+            logging.info("Waiting for Blazegraph container...")
+    
+    if connected:
+        # 2. Check if data exists
+        if not engine.has_movies():
+            logging.info("Blazegraph is empty. Loading data...")
+            try:
+                engine.upload_ttl(RDF_PATH)
+                logging.info("Data loaded successfully!")
+            except Exception as e:
+                logging.error(f"Failed to load data: {e}")
+        else:
+            logging.info("Blazegraph already has data.")
 
 @app.get("/")
 def read_root():
-    return {"message": "Movie Explorer API is running with Blazegraph & Semantic Search"}
+    return {"message": "Movie Explorer API is running"}
 
 @app.get("/options")
 def get_filter_options():
     return engine.get_options()
-
-@app.get("/search/semantic")
-def search_semantic(query: str, limit: int = 10):
-    if not semantic_search:
-        return []
-        
-    print(f"DEBUG: Semantic search for '{query}'", flush=True)
-    results = semantic_search.search(query, n_results=limit)
-    
-    if not results:
-        return []
-
-    # Get URIs
-    uris = [r['id'] for r in results]
-    
-    # Enrich with details
-    return engine.get_movie_details(uris)
 
 @app.get("/search")
 def search_movies(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { getOptions, searchMovies, searchSemantic } from '@/lib/api';
+import { getOptions, searchMovies } from '@/lib/api';
 import { FilterOptions, Movie } from '@/types';
 import { Sidebar } from '@/components/Sidebar';
 import { MovieCard } from '@/components/MovieCard';
@@ -19,13 +19,9 @@ export default function Home() {
     const fetchOptions = async () => {
       try {
         const opts = await getOptions();
-        if (opts) {
-          setOptions(opts);
-        }
+        setOptions(opts);
       } catch (e) {
         console.error("Failed to fetch options", e);
-        // Fallback to empty to prevent UI issues if Sidebar depends on it
-        setOptions({ genres: [], actors: [], directors: [] });
       }
     };
     fetchOptions();
@@ -34,12 +30,7 @@ export default function Home() {
   const handleSearch = async () => {
     setLoading(true);
     try {
-      let results;
-      if (filters.semanticQuery && filters.semanticQuery.trim().length > 0) {
-        results = await searchSemantic(filters.semanticQuery);
-      } else {
-        results = await searchMovies(filters);
-      }
+      const results = await searchMovies(filters);
       setMovies(results);
     } catch (e) {
       console.error("Search failed", e);

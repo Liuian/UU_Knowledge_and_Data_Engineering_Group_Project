@@ -1,76 +1,116 @@
 import logging
-from SPARQLWrapper import SPARQLWrapper, JSON
+import sys
+import time
+from SPARQLWrapper import SPARQLWrapper, JSON, POST, DIGEST
+import requests
 
 class QueryEngine:
-    def __init__(self, endpoint_url: str):
-        self.endpoint_url = endpoint_url
-        self.sparql = SPARQLWrapper(endpoint_url)
-        self.sparql.setReturnFormat(JSON)
-        logging.info(f"Initialized QueryEngine with endpoint: {endpoint_url}")
+    def __init__(self, blazegraph_url: str = "http://blazegraph:9999/bigdata/namespace/kb/sparql"):
+        self.endpoint = blazegraph_url
 
-    def _query(self, query: str):
-        """Executes a SPARQL query and returns JSON results."""
-        self.sparql.setQuery(query)
-        # Simple retry logic for transient connection errors
-        import time
-        for i in range(5):
-            try:
-                return self.sparql.query().convert()
-            except Exception as e:
-                # If connection refused or empty response, retry
-                logging.warning(f"SPARQL Query attempt {i+1} failed: {e}")
-                time.sleep(1)
+    def _get_sparql(self):
+        """Creates a new SPARQLWrapper instance."""
+        sparql = SPARQLWrapper(self.endpoint)
+        sparql.setReturnFormat(JSON)
+        return sparql
+
+    def is_connected(self):
+        """Checks if Blazegraph is reachable."""
+        try:
+            sparql = self._get_sparql()
+            sparql.setQuery("ASK { ?s ?p ?o }")
+            sparql.query()
+            return True
+        except Exception:
+            return False
+
+    def has_movies(self):
+        """Checks if movie data is loaded."""
+        try:
+            sparql = self._get_sparql()
+            sparql.setQuery("PREFIX ex: <http://example.org/movie/> ASK { ?s ex:title ?o }")
+            ret = sparql.query().convert()
+            # SPARQLWrapper JSON result for ASK is boolean
+            return ret["boolean"]
+        except Exception:
+            return False
+
+    def upload_ttl(self, file_path: str):
+        """Uploads a TTL file to Blazegraph via HTTP POST."""
+        url = self.endpoint 
         
-        logging.error(f"SPARQL Query failed after retries.")
-        return None
+        logging.info(f"Starting upload of {file_path} to {self.endpoint}...")
+        
+        with open(file_path, "rb") as f:
+            data = f.read()
+            
+        headers = {
+            "Content-Type": "application/x-turtle",
+        }
+        
+        response = requests.post(self.endpoint, data=data, headers=headers)
+        
+        if response.status_code != 200:
+            logging.error(f"Failed to upload data: {response.text}")
+            raise Exception(f"Blazegraph upload failed: {response.status_code}")
+            
+        logging.info(f"Successfully uploaded {len(data)} bytes.")
 
     def get_options(self):
         """Returns unique genres, actors, directors for dropdowns."""
         # Query Genres
+        logging.info("Fetching options...")
         q_genre = """
         PREFIX ex: <http://example.org/movie/>
-        SELECT DISTINCT ?label WHERE {
+        SELECT DISTINCT ?g WHERE {
             ?m ex:genre ?g .
-            BIND(REPLACE(STR(?g), "^.*\\\\/", "") AS ?label)
-        } ORDER BY ?label
+        } ORDER BY ?g
         """
-        genres = []
-        res = self._query(q_genre)
-        if res:
-             genres = [row["label"]["value"] for row in res["results"]["bindings"]]
+        genres_uris = self._execute_query_list(q_genre, "g")
+        genres = [uri.split("/")[-1] for uri in genres_uris]
+        genres = sorted(list(set(genres))) # Ensure unique and sorted
+        logging.info(f"Fetched {len(genres)} genres")
 
-        # Query Actors
+        # Query Actors (limit to top 200 most frequent)
+        logging.info("Fetching actors...")
         q_actor = """
         PREFIX ex: <http://example.org/movie/>
-        SELECT ?label (COUNT(?m) as ?count) WHERE {
+        SELECT ?a (COUNT(?m) as ?count) WHERE {
             ?m ex:actor ?a .
-            BIND(REPLACE(STR(?a), "^.*\\\\/", "") AS ?label)
-        } GROUP BY ?label ORDER BY DESC(?count) LIMIT 200
+        } GROUP BY ?a ORDER BY DESC(?count) LIMIT 200
         """
-        actors = []
-        res = self._query(q_actor)
-        if res:
-            actors = [row["label"]["value"] for row in res["results"]["bindings"]]
+        actors_uris = self._execute_query_list(q_actor, "a")
+        actors = [uri.split("/")[-1] for uri in actors_uris]
+        logging.info(f"Fetched {len(actors)} actors")
 
         # Query Directors
+        logging.info("Fetching directors...")
         q_director = """
         PREFIX ex: <http://example.org/movie/>
-        SELECT DISTINCT ?label WHERE {
+        SELECT DISTINCT ?d WHERE {
             ?m ex:director ?d .
-            BIND(REPLACE(STR(?d), "^.*\\\\/", "") AS ?label)
-        } ORDER BY ?label
+        } ORDER BY ?d
         """
-        directors = []
-        res = self._query(q_director)
-        if res:
-            directors = [row["label"]["value"] for row in res["results"]["bindings"]]
+        directors_uris = self._execute_query_list(q_director, "d")
+        directors = [uri.split("/")[-1] for uri in directors_uris]
+        directors = sorted(list(set(directors)))
+        logging.info(f"Fetched {len(directors)} directors")
 
         return {"genres": genres, "actors": actors, "directors": directors}
 
+    def _execute_query_list(self, query, var_name):
+        try:
+            sparql = self._get_sparql()
+            sparql.setQuery(query)
+            results = sparql.query().convert()
+            return [r[var_name]["value"] for r in results["results"]["bindings"]]
+        except Exception as e:
+            logging.error(f"SPARQL Error: {e}")
+            return []
+
     def search_movies(self, title=None, genre=None, year_start=None, year_end=None, actor=None, director=None, limit=50):
-        """Dynamic SPARQL query builder with optimized two-step execution."""
+        """Dynamic SPARQL query builder."""
         
-        # Step 1: Find matching movies (ID, title, year, runtime)
         query_body = """
         PREFIX ex: <http://example.org/movie/>
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
@@ -82,6 +122,7 @@ class QueryEngine:
             OPTIONAL { ?movie ex:runtime ?runtime }
         """
 
+        # Filters
         if title:
             query_body += f'\nFILTER(REGEX(?title, "{title}", "i"))'
         
@@ -109,12 +150,12 @@ class QueryEngine:
         movies_map = {}
         
         try:
-            # logging.info(f"Query Step 1: {query_body}")
-            res = self._query(query_body)
-            if not res:
-                return []
-                
-            for row in res["results"]["bindings"]:
+            logging.info(f"Query Step 1: {query_body}")
+            sparql = self._get_sparql()
+            sparql.setQuery(query_body)
+            results = sparql.query().convert()
+            
+            for row in results["results"]["bindings"]:
                 m_uri = row["movie"]["value"]
                 movies_map[m_uri] = {
                     "id": m_uri,
@@ -124,7 +165,6 @@ class QueryEngine:
                     "genres": [],
                     "directors": [],
                     "actors": [],
-                    "similarity": 0
                 }
         except Exception as e:
             logging.error(f"SPARQL Error in Step 1: {e}")
@@ -133,7 +173,7 @@ class QueryEngine:
         if not movies_map:
             return []
 
-        # Step 2: Fetch Details for found movies
+        # Step 2: Fetch Details
         movie_uris = list(movies_map.keys())
         uris_str = " ".join([f"<{uri}>" for uri in movie_uris])
 
@@ -146,85 +186,14 @@ class QueryEngine:
             }}
             """
             try:
-                res = self._query(q_attr)
-                if res:
-                    for row in res["results"]["bindings"]:
-                        m_uri = row["movie"]["value"]
-                        if m_uri in movies_map:
-                            val = row["val"]["value"].split('/')[-1]
-                            movies_map[m_uri][target_list].append(val)
-            except Exception as e:
-                logging.error(f"SPARQL Error fetching {attr_name}: {e}")
-
-        fetch_attribute("genre", "genres")
-        fetch_attribute("director", "directors")
-        fetch_attribute("actor", "actors")
-
-        results = list(movies_map.values())
-        for m in results:
-             m["genres"].sort()
-             m["directors"].sort()
-             m["actors"].sort()
-        
-    def get_movie_details(self, uris):
-        """Fetches full movie details for a list of URIs."""
-        if not uris:
-            return []
-            
-        uris_str = " ".join([f"<{uri}>" for uri in uris])
-        
-        # Step 1: Basic Info
-        query_body = f"""
-        PREFIX ex: <http://example.org/movie/>
-        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-
-        SELECT DISTINCT ?movie ?title ?year ?runtime
-        WHERE {{
-            VALUES ?movie {{ {uris_str} }}
-            ?movie ex:title ?title .
-            OPTIONAL {{ ?movie ex:year ?year }}
-            OPTIONAL {{ ?movie ex:runtime ?runtime }}
-        }}
-        """
-        
-        movies_map = {}
-        try:
-            res = self._query(query_body)
-            if res:
+                sparql = self._get_sparql()
+                sparql.setQuery(q_attr)
+                res = sparql.query().convert()
                 for row in res["results"]["bindings"]:
                     m_uri = row["movie"]["value"]
-                    movies_map[m_uri] = {
-                        "id": m_uri,
-                        "title": row["title"]["value"],
-                        "year": row["year"]["value"] if "year" in row else None,
-                        "runtime": row["runtime"]["value"] if "runtime" in row else None,
-                        "genres": [],
-                        "directors": [],
-                        "actors": [],
-                        "similarity": 0
-                    }
-        except Exception as e:
-            logging.error(f"Error fetching basic info: {e}")
-            return []
-
-        # Step 2: enrich
-        # Reuse logic? For now duplicate for speed.
-        def fetch_attribute(attr_name, target_list):
-            q_attr = f"""
-            PREFIX ex: <http://example.org/movie/>
-            SELECT ?movie ?val WHERE {{
-                VALUES ?movie {{ {uris_str} }}
-                ?movie ex:{attr_name} ?val .
-            }}
-            """
-            try:
-                res = self._query(q_attr)
-                if res:
-                    for row in res["results"]["bindings"]:
-                        m_uri = row["movie"]["value"]
-                        if m_uri in movies_map:
-                            val = row["val"]["value"].split('/')[-1]
-                            movies_map[m_uri][target_list].append(val)
+                    if m_uri in movies_map:
+                        val = row["val"]["value"].split('/')[-1]
+                        movies_map[m_uri][target_list].append(val)
             except Exception as e:
                 logging.error(f"SPARQL Error fetching {attr_name}: {e}")
 
@@ -237,44 +206,6 @@ class QueryEngine:
              m["genres"].sort()
              m["directors"].sort()
              m["actors"].sort()
-             
+        
+        logging.info(f"Search returned {len(results)} results")
         return results
-
-    def get_all_movies(self):
-        """Fetches all movies with titles and genres for indexing."""
-        query = """
-        PREFIX ex: <http://example.org/movie/>
-        SELECT ?movie ?title (GROUP_CONCAT(?genreText; separator=", ") AS ?genres) WHERE {
-            ?movie ex:title ?title .
-            OPTIONAL { 
-                ?movie ex:genre ?g . 
-                BIND(REPLACE(STR(?g), "^.*\\\\/", "") AS ?genreText)
-            }
-        } GROUP BY ?movie ?title
-        """
-        movies = []
-        seen_uris = set()
-        try:
-            res = self._query(query)
-            if res:
-                for row in res["results"]["bindings"]:
-                    uri = row["movie"]["value"]
-                    if uri in seen_uris:
-                        continue
-                    seen_uris.add(uri)
-                    
-                    title = row["title"]["value"]
-                    genres = row["genres"]["value"] if "genres" in row else ""
-                    # Combine Title and Genres for richer embedding context
-                    # e.g. "Dune - Science Fiction, Adventure"
-                    combined_text = f"{title}"
-                    if genres:
-                        combined_text += f" - Genres: {genres}"
-                        
-                    movies.append({
-                        "uri": uri,
-                        "text": combined_text
-                    })
-        except Exception as e:
-            logging.error(f"Error fetching all movies: {e}")
-        return movies

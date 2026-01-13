@@ -7,12 +7,10 @@ services:
       dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
-    environment:
-      - BLAZEGRAPH_URL=http://blazegraph:8080/bigdata/sparql
     volumes:
       - ./data:/app/data
       # Optional: sync backend code for dev without rebuild
-      # - ./backend:/app/backend
+      - ./backend:/app/backend
 
   frontend:
     build:
