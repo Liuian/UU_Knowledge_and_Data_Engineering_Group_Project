@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+
+from backend.embedding_engine import EmbeddingEngine
 from backend.query_engine import QueryEngine
 import os
 from typing import Optional
@@ -19,6 +21,7 @@ app.add_middleware(
 # Adjust path if running from root or backend folder. Assuming running from root.
 RDF_PATH = os.path.join(os.path.dirname(__file__), "../data/wiki_db_cleaned.ttl")
 engine = QueryEngine(RDF_PATH)
+embedding_engine = EmbeddingEngine(RDF_PATH)
 
 @app.get("/")
 def read_root():
@@ -38,6 +41,7 @@ def search_movies(
     year_end: Optional[int] = None,
     limit: int = 50
 ):
+
     print(f"DEBUG: Received search request - Title: {title}, Genre: {genre}", flush=True)
     return engine.search_movies(
         title=title,
@@ -48,3 +52,4 @@ def search_movies(
         year_end=year_end,
         limit=limit
     )
+
