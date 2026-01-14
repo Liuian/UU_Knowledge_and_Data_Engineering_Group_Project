@@ -20,8 +20,9 @@ app.add_middleware(
 # Initialize Query Engine
 # Adjust path if running from root or backend folder. Assuming running from root.
 RDF_PATH = os.path.join(os.path.dirname(__file__), "../data/wiki_db_cleaned.ttl")
+EMBEDDING_PATH = os.path.join(os.path.dirname(__file__), "../data/movie_embeddings.csv")
 engine = QueryEngine(RDF_PATH)
-embedding_engine = EmbeddingEngine(RDF_PATH)
+embedding_engine = EmbeddingEngine(EMBEDDING_PATH)
 
 @app.get("/")
 def read_root():
