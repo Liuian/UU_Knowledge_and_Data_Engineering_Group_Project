@@ -162,3 +162,5 @@ The queries implemented are:
   -Most recent movie per person
   -Movies excluding a specific genre
   -Movies with a genre but excluding a specific actor
+
+# Part 5: Website (backend/frontend) - Amoel
