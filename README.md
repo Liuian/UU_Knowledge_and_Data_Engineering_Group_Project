@@ -87,3 +87,15 @@ docker-compose build --no-cache frontend
 # Recreate the containers to pick up the new image
 docker-compose up -d --force-recreate
 ```
+
+## 👥 Contributors
+
+### Table 1: Individual Contributions
+
+| Name | Contribution |
+| :--- | :--- |
+| Yi-An Liu | • Targeted Data Extraction<br>• Cross-Source Enrichment<br>• Data Unification & Cleaning<br>• RDF Serialization |
+| Yiquan Hu | • Ontology Creation<br>• Data Features Enrichment<br>• Data Clean |
+| Melissa Rueca | • SPARQL queries<br>• Dataset statistics |
+| Amoel Geogy | • Website - frontend and backend<br>• Ontology - added the axioms for genre subclass |
+| Liam Battini | • Embeddings |
